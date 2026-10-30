@@ -54,7 +54,9 @@ port=${SS_PORT:-8388}
 method=${SS_METHOD:-chacha20-ietf-poly1305}
 if [ ! -f "$CONFIG" ]; then
     case "$port" in ''|*[!0-9]*|??????*) fail "端口必须为 1024–65535";; esac
-    [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] || fail "端口必须为 1024–65535"
+    if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+        fail "端口必须为 1024–65535"
+    fi
     case "$method" in chacha20-ietf-poly1305|aes-256-gcm|aes-128-gcm) ;; *) fail "不支持的加密方式";; esac
 fi
 # Use the matching stable release's community repository; never mix in edge.
