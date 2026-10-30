@@ -11,9 +11,9 @@ usage() {
 用法：sh install.sh [install|show|start|stop|restart|status|uninstall]
 默认 install；重复安装保留配置。
 可选环境变量（仅首次安装）：
-  SS_PORT=8388
-  SS_PASSWORD=随机生成
-  SS_METHOD=chacha20-ietf-poly1305（或 aes-256-gcm / aes-128-gcm）
+  SS_PORT=22335
+  SS_PASSWORD=12345
+  SS_METHOD=aes-256-gcm（或 chacha20-ietf-poly1305 / aes-128-gcm）
   SS_HOST=公网IP或域名（生成连接链接时使用）
 EOF
 }
@@ -50,8 +50,8 @@ case "$action" in
 esac
 command -v rc-service >/dev/null 2>&1 || fail "需要使用 OpenRC 的 Alpine 主机（不支持普通 Docker 容器）"
 [ -d /run/openrc ] || fail "OpenRC 尚未运行"
-port=${SS_PORT:-8388}
-method=${SS_METHOD:-chacha20-ietf-poly1305}
+port=${SS_PORT:-22335}
+method=${SS_METHOD:-aes-256-gcm}
 if [ ! -f "$CONFIG" ]; then
     case "$port" in ''|*[!0-9]*|??????*) fail "端口必须为 1024–65535";; esac
     if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
@@ -72,8 +72,8 @@ mkdir -p "$DIR"
 chown root:ss-alpine "$DIR"
 chmod 750 "$DIR"
 if [ ! -f "$CONFIG" ]; then
-    password=${SS_PASSWORD:-$(head -c 32 /dev/urandom | base64 | tr -d '\n')}
-    [ "${#password}" -ge 16 ] || fail "密码至少需要16个字符"
+    password=${SS_PASSWORD-12345}
+    [ -n "$password" ] || fail "密码不能为空"
     temp=$(mktemp "$DIR/.config.XXXXXX")
     trap 'rm -f "$temp"' EXIT HUP INT TERM
     jq -n --arg password "$password" --arg method "$method" --argjson port "$port" \
@@ -83,7 +83,7 @@ if [ ! -f "$CONFIG" ]; then
     mv "$temp" "$CONFIG"
     trap - EXIT HUP INT TERM
 fi
-jq -e '.server_port >= 1024 and .server_port <= 65535 and (.password | type == "string" and length >= 16)' "$CONFIG" >/dev/null || fail "现有配置无效"
+jq -e '.server_port >= 1024 and .server_port <= 65535 and (.password | type == "string" and length > 0)' "$CONFIG" >/dev/null || fail "现有配置无效"
 cat > "/etc/init.d/$SERVICE" <<'EOF'
 #!/sbin/openrc-run
 description="Shadowsocks Rust server"

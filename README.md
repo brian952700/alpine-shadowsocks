@@ -10,7 +10,7 @@
 wget -O /tmp/ss-install.sh https://raw.githubusercontent.com/brian952700/alpine-shadowsocks/main/install.sh && sh /tmp/ss-install.sh
 ```
 
-默认端口 **8388**、加密 **chacha20-ietf-poly1305**，自动生成随机密码，同时启用 TCP 和 UDP、OpenRC 开机启动与进程监管。
+默认监听 **0.0.0.0:22335**、加密 **aes-256-gcm**、密码 **12345**，同时启用 TCP 和 UDP、OpenRC 开机启动与进程监管。
 
 如需安装后直接输出客户端导入链接：
 
@@ -24,7 +24,7 @@ SS_HOST=你的公网IP sh /tmp/ss-install.sh
 SS_PORT=18443 SS_HOST=你的域名 SS_METHOD=aes-256-gcm sh /tmp/ss-install.sh
 ```
 
-可通过环境变量 `SS_PASSWORD` 设置至少16字符的密码；默认随机密码更方便。链接内包含密码，请妥善保存。
+可通过环境变量 `SS_PASSWORD` 设置非空密码。默认密码 `12345` 按用户要求设置，已公开。链接内包含密码，请妥善保存。
 
 ## 管理
 
