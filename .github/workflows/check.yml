@@ -1,0 +1,20 @@
+name: Check installer
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        run: shellcheck -s sh install.sh
+      - name: Alpine syntax and package smoke check
+        run: |
+          docker run --rm -v "$PWD:/src:ro" alpine:3.22 sh -ec '
+            sh -n /src/install.sh
+            sh /src/install.sh --help
+            if sh /src/install.sh invalid; then exit 1; fi
+            apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/v3.22/community shadowsocks-rust-ssserver jq
+            ssserver --version
+          '
