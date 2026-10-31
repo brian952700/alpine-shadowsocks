@@ -1,30 +1,53 @@
-# Alpine Shadowsocks 一键安装
+# Shadowsocks 一键安装（Alpine / Debian 12+）
 
-适用于使用 OpenRC 的 Alpine Linux 稳定版 VPS。采用官方 community 仓库的 **shadowsocks-rust**，由 apk 校验软件包签名；不混用 edge。具体版本和架构取决于当前 Alpine 仓库是否提供 `shadowsocks-rust-ssserver`。
+支持 Alpine Linux 稳定版（OpenRC），以及 Debian 12 及以上正式版本（systemd）。Debian 支持 amd64、arm64，使用官方 shadowsocks-rust v1.25.0 的 musl 二进制，并核对 GitHub 发布资产的 SHA256；Alpine 使用匹配系统版本的官方 community 软件包。
 
 ## 一键安装
 
-以 root 运行：
+以 root 执行：
 
 ```sh
 wget -O /tmp/ss-install.sh https://raw.githubusercontent.com/brian952700/alpine-shadowsocks/main/install.sh && sh /tmp/ss-install.sh
 ```
 
-默认监听 **0.0.0.0:22335**、加密 **aes-256-gcm**、密码 **12345**，同时启用 TCP 和 UDP、OpenRC 开机启动与进程监管。
+默认配置：
 
-如需安装后直接输出客户端导入链接：
-
-```sh
-SS_HOST=你的公网IP sh /tmp/ss-install.sh
+```json
+{
+  "server": "::",
+  "server_port": 22335,
+  "method": "aes-256-gcm",
+  "password": "12345",
+  "mode": "tcp_and_udp",
+  "timeout": 300,
+  "ipv6_only": false
+}
 ```
 
-自定义首次配置：
+`::` 配合 `ipv6_only:false` 同时接收 IPv6 和 IPv4，支持 TCP/UDP。主机必须启用 IPv6；脚本不会修改内核网络设置。默认密码按用户要求保留为公开的 `12345`。
+
+## 自定义与连接链接
 
 ```sh
-SS_PORT=18443 SS_HOST=你的域名 SS_METHOD=aes-256-gcm sh /tmp/ss-install.sh
+SS_PORT=22335 SS_METHOD=aes-256-gcm SS_PASSWORD=你的密码 SS_HOST=你的公网域名 sh /tmp/ss-install.sh
+SS_HOST=2001:db8::1234 sh /tmp/ss-install.sh show
 ```
 
-可通过环境变量 `SS_PASSWORD` 设置非空密码。默认密码 `12345` 按用户要求设置，已公开。链接内包含密码，请妥善保存。
+SS_HOST 填公网域名、IPv4 或不带方括号的 IPv6；仅用于生成连接链接，不影响监听地址。链接包含密码。
+
+首次安装可设置 SS_PORT、SS_METHOD、SS_PASSWORD。安装时可通过 SS_LISTEN 设置监听地址，应用于新配置和已有配置：
+
+```sh
+SS_LISTEN=0.0.0.0 sh /tmp/ss-install.sh
+```
+
+以上适合未启用 IPv6 的主机，仅监听 IPv4。
+
+## 升级已有安装
+
+重新下载并运行脚本。保留原端口、密码、加密方式；旧配置的 `0.0.0.0` 自动改为 `::`，并设置 `ipv6_only:false`。自定义监听地址保留。修改前会在同目录生成 `config.json.bak.时间戳` 备份。
+
+为兼容原安装，两种系统沿用服务名 `ss-alpine`、用户 `ss-alpine` 和配置路径 `/etc/ss-alpine/config.json`。
 
 ## 管理
 
@@ -33,26 +56,19 @@ sh /tmp/ss-install.sh status
 sh /tmp/ss-install.sh restart
 sh /tmp/ss-install.sh stop
 sh /tmp/ss-install.sh start
-SS_HOST=你的公网IP sh /tmp/ss-install.sh show
 jq -r .password /etc/ss-alpine/config.json
-```
-
-重复安装保留原有配置，环境变量不覆盖它。配置文件为 `/etc/ss-alpine/config.json`，修改后执行 `rc-service ss-alpine restart`。服务以专用非 root 用户运行，端口必须为1024–65535。
-
-卸载服务（保留配置和软件包，方便恢复）：
-
-```sh
 sh /tmp/ss-install.sh uninstall
 ```
 
-## 网络与排错
+卸载移除服务，保留配置及程序。Debian 使用 systemd，日志可用 `journalctl -u ss-alpine -e` 查看；Alpine 使用 OpenRC。手工改配置后运行 restart。
 
-- 在云安全组及主机防火墙放行所选端口的 **TCP 和 UDP**。脚本不会修改防火墙。
-- 默认监听 `0.0.0.0`（IPv4）；公网地址由 `SS_HOST` 指定，不调用外部 IP 查询服务。IPv6 使用时需自行将配置的 server 改为 `::` 并确认网络连通。
-- 若提示找不到软件包，请检查该版本、架构的 community 仓库是否提供软件包及网络是否可达；脚本不会绕过签名校验。
-- 端口占用、配置错误时，用 `rc-service ss-alpine stop` 后执行 `ssserver -c /etc/ss-alpine/config.json` 查看前台错误，完成后 Ctrl+C 并重新启动服务。
-- 需要已经运行的 OpenRC；普通 Docker 容器不适用。Alpine diskless 模式还需自行处理持久化（lbu）。
-- 自动检查覆盖 shell 语法、ShellCheck、帮助入口和官方包安装；尚未在真实 VPS 上完成端到端代理连接验证。
+`SS_START=0 sh /tmp/ss-install.sh` 只安装并设置开机启动，暂不启动服务，适用于准备系统镜像；正常安装不要设置。
 
-参考：[Alpine 官方软件包](https://pkgs.alpinelinux.org/package/v3.22/community/x86_64/shadowsocks-rust-ssserver)、[shadowsocks-rust](https://github.com/shadowsocks/shadowsocks-rust)。
+## 网络与验证
+
+放行 IPv4 和 IPv6 防火墙及云安全组中所选端口的 TCP/UDP。NAT 主机还需配置对应的端口映射；脚本不会修改这些规则。IPv6 公网访问需要主机本身拥有可路由 IPv6 地址。
+
+自动检查覆盖 ShellCheck、Alpine、Debian 12 和 Debian 13 中的安装、配置迁移、服务文件生成，以及实际进程的 IPv4/IPv6 TCP 监听。容器检查不验证真实主机的开机启动、外部防火墙或公网端到端代理连接。
+
+参考：[shadowsocks-rust 官方文档](https://github.com/shadowsocks/shadowsocks-rust)。
 
