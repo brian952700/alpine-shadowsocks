@@ -3,18 +3,19 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
-  check:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: ShellCheck
-        run: shellcheck -s sh install.sh
-      - name: Alpine syntax and package smoke check
-        run: |
-          docker run --rm -v "$PWD:/src:ro" alpine:3.22 sh -ec '
-            sh -n /src/install.sh
-            sh /src/install.sh --help
-            if sh /src/install.sh invalid; then exit 1; fi
-            apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/v3.22/community shadowsocks-rust-ssserver jq
-            ssserver --version
-          '
+      - run: shellcheck -s sh install.sh smoke-test.sh
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["alpine:3.22", "debian:12", "debian:13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install, migrate and check dual stack
+        run: docker run --rm --sysctl net.ipv6.conf.all.disable_ipv6=0 -v "$PWD:/src:ro" ${{ matrix.image }} sh /src/smoke-test.sh
+
