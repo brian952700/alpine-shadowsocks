@@ -59,7 +59,11 @@ case "$ID" in
     *) fail "仅支持 Alpine Linux 和 Debian 12 及以上";;
 esac
 service_action() {
-    if [ "$platform" = alpine ]; then rc-service "$SERVICE" "$1"; else systemctl "$1" "$SERVICE.service"; fi
+    if [ "$platform" = alpine ]; then
+        rc-service "$SERVICE" "$1"
+    else
+        systemctl --no-pager --full "$1" "$SERVICE.service"
+    fi
 }
 case "$action" in
     show) show; exit;;
