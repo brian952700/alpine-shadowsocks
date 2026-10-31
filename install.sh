@@ -95,7 +95,7 @@ repo="https://dl-cdn.alpinelinux.org/alpine/v$release/community"
 apk add --no-cache --repository "$repo" shadowsocks-rust-ssserver jq
 else
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl jq xz-utils systemd
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl jq xz-utils systemd adduser
     case "$(dpkg --print-architecture)" in
         amd64) target=x86_64-unknown-linux-musl;;
         arm64) target=aarch64-unknown-linux-musl;;
@@ -121,9 +121,12 @@ else
     trap - EXIT HUP INT TERM
 fi
 [ -x "$binary" ] || fail "未找到 ssserver"
+if [ "$platform" = alpine ]; then
+    if ! grep -q '^ss-alpine:' /etc/group; then addgroup -S ss-alpine; fi
+fi
 if ! id ss-alpine >/dev/null 2>&1; then
     if [ "$platform" = alpine ]; then
-        adduser -S -D -H -s /sbin/nologin ss-alpine
+        adduser -S -D -H -G ss-alpine -s /sbin/nologin ss-alpine
     else
         adduser --system --group --no-create-home --home /nonexistent --shell /usr/sbin/nologin ss-alpine
     fi
