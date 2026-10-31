@@ -11,12 +11,12 @@ fi
 sh -n /src/install.sh
 sh /src/install.sh --help
 if sh /src/install.sh invalid; then exit 1; fi
-SS_START=0 sh /src/install.sh
+SS_HOST=example.com SS_START=0 sh /src/install.sh
 jq -e '.server == "::" and .ipv6_only == false and .server_port == 22335 and .password == "12345" and .method == "aes-256-gcm"' /etc/ss-alpine/config.json
 # Reproduce an old install; migration must preserve its credentials and port.
 jq '.server="0.0.0.0" | .server_port=22336 | .password="existing-password" | del(.ipv6_only)' /etc/ss-alpine/config.json > /tmp/old.json
 cat /tmp/old.json > /etc/ss-alpine/config.json
-SS_START=0 sh /src/install.sh
+SS_HOST=example.com SS_START=0 sh /src/install.sh
 jq -e '.server == "::" and .ipv6_only == false and .server_port == 22336 and .password == "existing-password"' /etc/ss-alpine/config.json
 if [ -f /etc/alpine-release ]; then
     test -x /etc/init.d/ss-alpine
@@ -42,3 +42,5 @@ print("IPv4 and IPv6 TCP listeners passed")
 PY
 kill -0 "$pid"
 
+link=$(SS_HOST=2001:db8::1 sh /src/install.sh show)
+printf '%s\n' "$link" | grep -F '@[2001:db8::1]:22336#Shadowsocks'

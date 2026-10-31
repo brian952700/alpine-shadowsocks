@@ -22,6 +22,13 @@ EOF
 show() {
     [ -f "$CONFIG" ] || fail "尚未安装"
     host=${SS_HOST:-}
+    if [ -z "$host" ]; then
+        printf '%s\n' "正在查询公网 IP，以生成 SS 链接……" >&2
+        host=$(curl -4 --fail --silent --show-error --connect-timeout 3 --max-time 5 https://api.ipify.org 2>/dev/null) || host=
+        if [ -z "$host" ]; then
+            host=$(curl -6 --fail --silent --show-error --connect-timeout 3 --max-time 5 https://api6.ipify.org 2>/dev/null) || host=
+        fi
+    fi
     printf '配置：%s\n' "$CONFIG"
     jq '{server,server_port,method,mode}' "$CONFIG"
     if [ -n "$host" ]; then
@@ -31,7 +38,7 @@ show() {
         port=$(jq -r '.server_port' "$CONFIG")
         printf '连接链接（含密码，请妥善保存）：\nss://%s@%s:%s#Shadowsocks\n' "$credentials" "$host" "$port"
     else
-        printf '%s\n' "查看密码：jq -r .password $CONFIG" "生成链接：SS_HOST=你的公网IP sh install.sh show"
+        printf '%s\n' "公网 IP 查询失败。生成链接：SS_HOST=你的公网IP或域名 sh install.sh show" "查看密码：jq -r .password $CONFIG"
     fi
 }
 case "${1:-install}" in -h|--help|help) usage; exit 0;; esac
@@ -92,7 +99,7 @@ if [ "$platform" = alpine ]; then
 release=$(cut -d. -f1,2 /etc/alpine-release)
 case "$release" in 3.[0-9]*) ;; *) fail "需要 Alpine 稳定版";; esac
 repo="https://dl-cdn.alpinelinux.org/alpine/v$release/community"
-apk add --no-cache --repository "$repo" shadowsocks-rust-ssserver jq
+apk add --no-cache --repository "$repo" shadowsocks-rust-ssserver jq curl ca-certificates
 else
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl jq xz-utils systemd adduser

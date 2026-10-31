@@ -33,7 +33,9 @@ SS_PORT=22335 SS_METHOD=aes-256-gcm SS_PASSWORD=你的密码 SS_HOST=你的公�
 SS_HOST=2001:db8::1234 sh /tmp/ss-install.sh show
 ```
 
-SS_HOST 填公网域名、IPv4 或不带方括号的 IPv6；仅用于生成连接链接，不影响监听地址。链接包含密码。
+安装完成后会自动查询公网 IP 并输出可导入客户端的 `ss://` 链接：优先查询 IPv4，失败后查询 IPv6。查询使用 ipify HTTPS 服务（api.ipify.org / api6.ipify.org），每次最多5秒，不发送密码。
+
+可通过 SS_HOST 指定公网域名、IPv4 或不带方括号的 IPv6，设置后不再查询公网 IP。NAT 服务器请指定对外地址，并确认默认端口与公网映射端口一致。链接包含密码。查询失败时，可按提示设置 SS_HOST 后重新执行 show。
 
 首次安装可设置 SS_PORT、SS_METHOD、SS_PASSWORD。安装时可通过 SS_LISTEN 设置监听地址，应用于新配置和已有配置：
 
