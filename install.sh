@@ -5,12 +5,75 @@ umask 077
 SERVICE=ss-alpine
 DIR=/etc/ss-alpine
 CONFIG=$DIR/config.json
-fail() { printf '%s\n' "错误：$*" >&2; exit 1; }
+# User-facing output bypasses the detailed installation log.
+exec 3>&1
+cyan= green= yellow= red= reset=
+if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR+x}" ]; then
+    cyan=$(printf '\033[36m'); green=$(printf '\033[32m')
+    yellow=$(printf '\033[33m'); red=$(printf '\033[31m'); reset=$(printf '\033[0m')
+fi
+log= work= temp= tty_hidden=0
+cleanup() {
+    result=$?
+    trap - EXIT
+    if [ "$tty_hidden" = 1 ]; then stty echo < /dev/tty || true; fi
+    if [ -n "$temp" ]; then rm -f "$temp"; fi
+    if [ -n "$work" ]; then rm -rf "$work"; fi
+    if [ "$result" -ne 0 ] && [ -n "$log" ]; then
+        printf '\n%s  × 安装未完成%s\n  详细日志：%s\n\n' "$red" "$reset" "$log" >&3
+        tail -n 15 "$log" >&3
+    fi
+    exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
+fail() { printf '\n%s  × %s%s\n' "$red" "$*" "$reset" >&3; exit 1; }
+line() { printf '\n  ────────────────────────────────────────\n\n' >&3; }
+heading() {
+    line
+    printf '%s  Shadowsocks 安装助手%s\n  Debian / Alpine · IPv4 + IPv6\n' "$cyan" "$reset" >&3
+    line
+}
+step() { printf '%s  [%s/5] %s%s\n' "$cyan" "$1" "$2" "$reset" >&3; }
+ok() { printf '%s        ✓ %s%s\n\n' "$green" "$*" "$reset" >&3; }
+warn() { printf '%s  ! %s%s\n' "$yellow" "$*" "$reset" >&3; }
+prompt() {
+    printf '  %s [%s]：' "$1" "$2" >&3
+    IFS= read -r answer < /dev/tty || fail "未读取到输入"
+}
+interactive_config() {
+    [ -t 0 ] && [ -t 1 ] || fail "交互模式需要终端；自动安装请去掉 --interactive"
+    heading
+    printf '  系统       %s\n' "${PRETTY_NAME:-$ID}" >&3
+    if [ -f "$CONFIG" ]; then
+        warn "检测到已有配置，将保留端口、密码和加密方式。"
+        prompt '保留配置并升级？y/N' N
+        case "$answer" in y|Y) ;; *) printf '  已取消，未修改安装。\n' >&3; exit 0;; esac
+    else
+        prompt '监听端口' "${SS_PORT:-22335}"; SS_PORT=${answer:-${SS_PORT:-22335}}
+        prompt '加密方式' "${SS_METHOD:-aes-256-gcm}"; SS_METHOD=${answer:-${SS_METHOD:-aes-256-gcm}}
+        prompt '监听地址（:: 双栈 / 0.0.0.0 IPv4）' "${SS_LISTEN:-::}"; SS_LISTEN=${answer:-${SS_LISTEN:-::}}
+        printf '  密码 [回车使用现有默认值，输入隐藏]：' >&3
+        stty -echo < /dev/tty
+        tty_hidden=1
+        IFS= read -r answer < /dev/tty || fail "未读取到密码"
+        stty echo < /dev/tty
+        tty_hidden=0
+        printf '\n' >&3
+        SS_PASSWORD=${answer:-${SS_PASSWORD-12345}}
+        prompt '公网域名或 IP（留空自动查询）' "${SS_HOST:-自动}"
+        SS_HOST=${answer:-${SS_HOST:-}}
+        printf '\n  端口 %s · %s · 监听 %s\n' "$SS_PORT" "$SS_METHOD" "$SS_LISTEN" >&3
+        prompt '开始安装？Y/n' Y
+        case "$answer" in n|N) printf '  已取消，未修改安装。\n' >&3; exit 0;; esac
+    fi
+}
 usage() {
     cat <<'EOF'
 用法：sh install.sh [install|show|start|stop|restart|status|uninstall]
-默认 install；重复安装保留配置。
-可选环境变量（仅首次安装）：
+默认 install；重复安装保留配置。可用 --interactive 进入交互模式。
+SS_PORT / SS_PASSWORD / SS_METHOD 仅用于首次安装；其他选项见说明：
   SS_PORT=22335
   SS_PASSWORD=12345
   SS_METHOD=aes-256-gcm（或 chacha20-ietf-poly1305 / aes-128-gcm）
@@ -29,21 +92,24 @@ show() {
             host=$(curl -6 --fail --silent --show-error --connect-timeout 3 --max-time 5 https://api6.ipify.org 2>/dev/null) || host=
         fi
     fi
-    printf '配置：%s\n' "$CONFIG"
-    jq '{server,server_port,method,mode}' "$CONFIG"
+    line
+    printf '  连接信息\n\n  监听地址   %s\n  端口       %s · TCP / UDP\n  加密方式   %s\n  配置文件   %s\n' \
+        "$(jq -r .server "$CONFIG")" "$(jq -r .server_port "$CONFIG")" "$(jq -r .method "$CONFIG")" "$CONFIG" >&3
     if [ -n "$host" ]; then
         case "$host" in *[!a-zA-Z0-9.:_-]*) fail "SS_HOST 格式不正确";; esac
         case "$host" in *:*) host="[$host]";; esac
         credentials=$(jq -jr '.method,":",.password' "$CONFIG" | base64 | tr -d '\n=' | tr '+/' '-_')
         port=$(jq -r '.server_port' "$CONFIG")
-        printf '连接链接（含密码，请妥善保存）：\nss://%s@%s:%s#Shadowsocks\n' "$credentials" "$host" "$port"
+        printf '\n%s  客户端导入链接（含密码）：%s\n\nss://%s@%s:%s#Shadowsocks\n' "$green" "$reset" "$credentials" "$host" "$port"
     else
         printf '%s\n' "公网 IP 查询失败。生成链接：SS_HOST=你的公网IP或域名 sh install.sh show" "查看密码：jq -r .password $CONFIG"
     fi
 }
+interactive=0
 case "${1:-install}" in -h|--help|help) usage; exit 0;; esac
 [ "$#" -le 1 ] || { usage; exit 1; }
 action=${1:-install}
+if [ "$action" = --interactive ]; then interactive=1; action=install; fi
 case "$action" in install|show|start|stop|restart|status|uninstall) ;; *) usage; exit 1;; esac
 [ "$(id -u)" -eq 0 ] || fail "请以 root 运行"
 [ -f /etc/os-release ] || fail "无法识别系统"
@@ -81,6 +147,13 @@ case "$action" in
         printf '%s\n' "服务已移除，配置及软件包保留。配置目录：$DIR"
         exit;;
 esac
+if [ "$interactive" = 1 ]; then interactive_config; else heading; fi
+mkdir -p /var/log/ss-alpine
+chmod 700 /var/log/ss-alpine
+log=$(mktemp /var/log/ss-alpine/install.XXXXXX.log)
+printf '  系统       %s\n  安装日志   %s\n\n' "${PRETTY_NAME:-$ID}" "$log" >&3
+install_main() {
+step 1 '检查系统与运行环境'
 if [ "${SS_START:-1}" != 0 ]; then
     if [ "$platform" = alpine ]; then
         command -v rc-service >/dev/null 2>&1 || fail "需要 OpenRC"
@@ -98,6 +171,8 @@ if [ ! -f "$CONFIG" ]; then
     fi
     case "$method" in chacha20-ietf-poly1305|aes-256-gcm|aes-128-gcm) ;; *) fail "不支持的加密方式";; esac
 fi
+ok '系统与配置参数检查完成'
+step 2 '安装程序和依赖（详细输出写入日志）'
 if [ "$platform" = alpine ]; then
 # Use the matching stable release's community repository; never mix in edge.
 release=$(cut -d. -f1,2 /etc/alpine-release)
@@ -115,7 +190,6 @@ else
     version=v1.25.0
     asset="shadowsocks-$version.$target.tar.xz"
     work=$(mktemp -d)
-    trap 'rm -rf "$work"' EXIT HUP INT TERM
     curl --fail --silent --show-error --location --retry 3 --proto '=https' \
         "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/tags/$version" -o "$work/release.json"
     digest=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest | select(startswith("sha256:"))' "$work/release.json") || fail "官方发布缺少 SHA256 摘要"
@@ -129,9 +203,10 @@ else
     "$work/ssserver" --version
     install -m 755 "$work/ssserver" "$binary"
     rm -rf "$work"
-    trap - EXIT HUP INT TERM
 fi
 [ -x "$binary" ] || fail "未找到 ssserver"
+ok "程序已就绪"
+step 3 '写入配置与服务账户'
 if [ "$platform" = alpine ]; then
     if ! grep -q '^ss-alpine:' /etc/group; then addgroup -S ss-alpine; fi
 fi
@@ -149,17 +224,14 @@ if [ ! -f "$CONFIG" ]; then
     password=${SS_PASSWORD-12345}
     [ -n "$password" ] || fail "密码不能为空"
     temp=$(mktemp "$DIR/.config.XXXXXX")
-    trap 'rm -f "$temp"' EXIT HUP INT TERM
     jq -n --arg password "$password" --arg method "$method" --argjson port "$port" --arg listen "${SS_LISTEN:-::}" \
         '{server:$listen,server_port:$port,password:$password,method:$method,mode:"tcp_and_udp",timeout:300,ipv6_only:false}' > "$temp"
     chown root:ss-alpine "$temp"
     chmod 640 "$temp"
     mv "$temp" "$CONFIG"
-    trap - EXIT HUP INT TERM
 fi
 # Upgrade old wildcard listeners while preserving credentials and custom addresses.
 temp=$(mktemp "$DIR/.config.XXXXXX")
-trap 'rm -f "$temp"' EXIT HUP INT TERM
 jq --arg listen "${SS_LISTEN:-}" '
     .server = (if $listen != "" then $listen elif .server == "0.0.0.0" then "::" else .server end)
     | if .server == "::" then .ipv6_only = false else . end
@@ -172,8 +244,9 @@ if ! cmp -s "$CONFIG" "$temp"; then
 else
     rm -f "$temp"
 fi
-trap - EXIT HUP INT TERM
 jq -e '.server_port >= 1024 and .server_port <= 65535 and (.password | type == "string" and length > 0)' "$CONFIG" >/dev/null || fail "现有配置无效"
+ok '配置已就绪，已有凭据保留'
+step 4 '设置服务与开机启动'
 if [ "$platform" = alpine ]; then
 cat > "/etc/init.d/$SERVICE" <<'EOF'
 #!/sbin/openrc-run
@@ -217,11 +290,27 @@ EOF
 if [ "${SS_START:-1}" != 0 ]; then systemctl daemon-reload; fi
 systemctl enable "$SERVICE.service"
 fi
+ok '开机启动已启用'
+step 5 '检查服务状态'
 if [ "${SS_START:-1}" != 0 ]; then
 service_action restart
 sleep 2
 service_action status || fail "服务启动失败，请检查配置、IPv6 支持和端口占用"
+ok '服务正在运行'
+else
+    ok '仅准备模式：已跳过服务启动'
+fi
+}
+install_main >> "$log" 2>&1
+line
+if [ "${SS_START:-1}" = 0 ]; then
+    warn '安装文件已准备完成，服务尚未启动。'
+else
+    ok '安装完成，服务正在运行'
 fi
 show
-printf '%s\n' "请在云安全组和主机防火墙放行所配置端口的 TCP 与 UDP。"
+line
+printf '  查看链接   sh /tmp/ss-install.sh show\n  重启服务   sh /tmp/ss-install.sh restart\n  查看日志   cat %s\n\n' "$log" >&3
+warn '请在云安全组和主机防火墙放行所配置端口的 TCP 与 UDP。'
+
 
