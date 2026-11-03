@@ -7,12 +7,12 @@ DIR=/etc/ss-alpine
 CONFIG=$DIR/config.json
 # User-facing output bypasses the detailed installation log.
 exec 3>&1
-cyan= green= yellow= red= reset=
+cyan='' green='' yellow='' red='' reset=''
 if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR+x}" ]; then
     cyan=$(printf '\033[36m'); green=$(printf '\033[32m')
     yellow=$(printf '\033[33m'); red=$(printf '\033[31m'); reset=$(printf '\033[0m')
 fi
-log= work= temp= tty_hidden=0
+log='' work='' temp='' tty_hidden=0
 cleanup() {
     result=$?
     trap - EXIT
@@ -43,7 +43,7 @@ prompt() {
     IFS= read -r answer < /dev/tty || fail "未读取到输入"
 }
 interactive_config() {
-    [ -t 0 ] && [ -t 1 ] || fail "交互模式需要终端；自动安装请去掉 --interactive"
+    if [ ! -t 0 ] || [ ! -t 1 ]; then fail "交互模式需要终端；自动安装请去掉 --interactive"; fi
     heading
     printf '  系统       %s\n' "${PRETTY_NAME:-$ID}" >&3
     if [ -f "$CONFIG" ]; then
@@ -150,7 +150,7 @@ esac
 if [ "$interactive" = 1 ]; then interactive_config; else heading; fi
 mkdir -p /var/log/ss-alpine
 chmod 700 /var/log/ss-alpine
-log=$(mktemp /var/log/ss-alpine/install.XXXXXX.log)
+log=$(mktemp /var/log/ss-alpine/install.log.XXXXXX)
 printf '  系统       %s\n  安装日志   %s\n\n' "${PRETTY_NAME:-$ID}" "$log" >&3
 install_main() {
 step 1 '检查系统与运行环境'
