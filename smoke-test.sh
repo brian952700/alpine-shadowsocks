@@ -20,7 +20,7 @@ grep -F '[1/5]' /tmp/ui-success.out
 grep -F '[5/5]' /tmp/ui-success.out
 grep -F '@example.com:22335#Shadowsocks' /tmp/ui-success.out
 if grep -q "$(printf '\033')" /tmp/ui-success.out; then exit 1; fi
-jq -e '.server == "::" and .ipv6_only == false and .server_port == 22335 and .password == "12345" and .method == "aes-256-gcm"' /etc/ss-alpine/config.json
+jq -e '.server == "::" and .ipv6_only == false and .server_port == 22335 and .password == "12345@" and .method == "aes-256-gcm"' /etc/ss-alpine/config.json
 # Reproduce an old install; migration must preserve its credentials and port.
 jq '.server="0.0.0.0" | .server_port=22336 | .password="existing-password" | del(.ipv6_only)' /etc/ss-alpine/config.json > /tmp/old.json
 cat /tmp/old.json > /etc/ss-alpine/config.json
@@ -83,3 +83,4 @@ assert "已取消".encode() in data, data
 assert b"\x1b[" not in data, data
 print("Interactive cancellation and NO_COLOR passed")
 PY
+

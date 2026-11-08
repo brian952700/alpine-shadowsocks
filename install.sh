@@ -62,7 +62,7 @@ interactive_config() {
         stty echo < /dev/tty
         tty_hidden=0
         printf '\n' >&3
-        SS_PASSWORD=${answer:-${SS_PASSWORD-12345}}
+        SS_PASSWORD=${answer:-${SS_PASSWORD-12345@}}
         prompt '公网域名或 IP（留空自动查询）' "${SS_HOST:-自动}"
         SS_HOST=${answer:-${SS_HOST:-}}
         printf '\n  端口 %s · %s · 监听 %s\n  开始安装？Y/n [Y]：' "$SS_PORT" "$SS_METHOD" "$SS_LISTEN" >&3
@@ -73,10 +73,10 @@ interactive_config() {
 usage() {
     cat <<'EOF'
 用法：sh install.sh [install|show|start|stop|restart|status|uninstall]
-默认 install；重复安装保留配置。可用 --interactive 进入交互模式。
+首次安装在终端中默认询问配置。--non-interactive 跳过询问，--interactive 强制交互。
 SS_PORT / SS_PASSWORD / SS_METHOD 仅用于首次安装；其他选项见说明：
   SS_PORT=22335
-  SS_PASSWORD=12345
+  SS_PASSWORD=12345@
   SS_METHOD=aes-256-gcm（或 chacha20-ietf-poly1305 / aes-128-gcm）
   SS_HOST=公网IP或域名（生成连接链接时使用）
   SS_LISTEN=::（双栈；可设为 0.0.0.0 仅监听 IPv4，安装时也可修改现有监听地址）
@@ -110,7 +110,12 @@ interactive=0
 case "${1:-install}" in -h|--help|help) usage; exit 0;; esac
 [ "$#" -le 1 ] || { usage; exit 1; }
 action=${1:-install}
-if [ "$action" = --interactive ]; then interactive=1; action=install; fi
+case "$action" in
+    --interactive) interactive=1; action=install;;
+    --non-interactive) action=install;;
+    install)
+        if [ ! -f "$CONFIG" ] && [ -t 0 ] && [ -t 1 ]; then interactive=1; fi;;
+esac
 case "$action" in install|show|start|stop|restart|status|uninstall) ;; *) usage; exit 1;; esac
 [ "$(id -u)" -eq 0 ] || fail "请以 root 运行"
 [ -f /etc/os-release ] || fail "无法识别系统"
@@ -222,7 +227,7 @@ mkdir -p "$DIR"
 chown root:ss-alpine "$DIR"
 chmod 750 "$DIR"
 if [ ! -f "$CONFIG" ]; then
-    password=${SS_PASSWORD-12345}
+    password=${SS_PASSWORD-12345@}
     [ -n "$password" ] || fail "密码不能为空"
     temp=$(mktemp "$DIR/.config.XXXXXX")
     jq -n --arg password "$password" --arg method "$method" --argjson port "$port" --arg listen "${SS_LISTEN:-::}" \
@@ -320,6 +325,7 @@ show
 line
 printf '  查看链接   sh /tmp/ss-install.sh show\n  重启服务   sh /tmp/ss-install.sh restart\n  查看日志   cat %s\n\n' "$log" >&3
 warn '请在云安全组和主机防火墙放行所配置端口的 TCP 与 UDP。'
+
 
 
 
