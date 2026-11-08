@@ -31,24 +31,25 @@ trap 'exit 143' HUP TERM
 fail() { printf '\n%s  × %s%s\n' "$red" "$*" "$reset" >&3; exit 1; }
 line() { printf '\n  ────────────────────────────────────────\n\n' >&3; }
 heading() {
-    line
-    printf '%s  Shadowsocks 安装助手%s\n  Debian / Alpine · IPv4 + IPv6\n' "$cyan" "$reset" >&3
-    line
+    printf '\n  ────────────────────────────────────────\n\n%s  Shadowsocks 安装助手%s\n  Debian / Alpine · IPv4 + IPv6\n  系统       %s\n\n  ────────────────────────────────────────\n\n' \
+        "$cyan" "$reset" "${PRETTY_NAME:-$ID}" >&3
 }
 step() { printf '%s  [%s/5] %s%s\n' "$cyan" "$1" "$2" "$reset" >&3; }
 ok() { printf '%s        ✓ %s%s\n\n' "$green" "$*" "$reset" >&3; }
 warn() { printf '%s  ! %s%s\n' "$yellow" "$*" "$reset" >&3; }
 prompt() {
     printf '  %s [%s]：' "$1" "$2" >&3
+    read_answer
+}
+read_answer() {
     IFS= read -r answer < /dev/tty || fail "未读取到输入"
 }
 interactive_config() {
     if [ ! -t 0 ] || [ ! -t 1 ]; then fail "交互模式需要终端；自动安装请去掉 --interactive"; fi
     heading
-    printf '  系统       %s\n' "${PRETTY_NAME:-$ID}" >&3
     if [ -f "$CONFIG" ]; then
-        warn "检测到已有配置，将保留端口、密码和加密方式。"
-        prompt '保留配置并升级？y/N' N
+        printf '%s  ! 检测到已有配置，将保留端口、密码和加密方式。%s\n  保留配置并升级？y/N [N]：' "$yellow" "$reset" >&3
+        read_answer
         case "$answer" in y|Y) ;; *) printf '  已取消，未修改安装。\n' >&3; exit 0;; esac
     else
         prompt '监听端口' "${SS_PORT:-22335}"; SS_PORT=${answer:-${SS_PORT:-22335}}
@@ -64,8 +65,8 @@ interactive_config() {
         SS_PASSWORD=${answer:-${SS_PASSWORD-12345}}
         prompt '公网域名或 IP（留空自动查询）' "${SS_HOST:-自动}"
         SS_HOST=${answer:-${SS_HOST:-}}
-        printf '\n  端口 %s · %s · 监听 %s\n' "$SS_PORT" "$SS_METHOD" "$SS_LISTEN" >&3
-        prompt '开始安装？Y/n' Y
+        printf '\n  端口 %s · %s · 监听 %s\n  开始安装？Y/n [Y]：' "$SS_PORT" "$SS_METHOD" "$SS_LISTEN" >&3
+        read_answer
         case "$answer" in n|N) printf '  已取消，未修改安装。\n' >&3; exit 0;; esac
     fi
 }
@@ -84,6 +85,9 @@ EOF
 }
 show() {
     [ -f "$CONFIG" ] || fail "尚未安装"
+    line
+    printf '  连接信息\n\n  监听地址   %s\n  端口       %s · TCP / UDP\n  加密方式   %s\n  配置文件   %s\n' \
+        "$(jq -r .server "$CONFIG")" "$(jq -r .server_port "$CONFIG")" "$(jq -r .method "$CONFIG")" "$CONFIG" >&3
     host=${SS_HOST:-}
     if [ -z "$host" ]; then
         printf '%s\n' "正在查询公网 IP，以生成 SS 链接……" >&2
@@ -92,9 +96,6 @@ show() {
             host=$(curl -6 --fail --silent --show-error --connect-timeout 3 --max-time 5 https://api6.ipify.org 2>/dev/null) || host=
         fi
     fi
-    line
-    printf '  连接信息\n\n  监听地址   %s\n  端口       %s · TCP / UDP\n  加密方式   %s\n  配置文件   %s\n' \
-        "$(jq -r .server "$CONFIG")" "$(jq -r .server_port "$CONFIG")" "$(jq -r .method "$CONFIG")" "$CONFIG" >&3
     if [ -n "$host" ]; then
         case "$host" in *[!a-zA-Z0-9.:_-]*) fail "SS_HOST 格式不正确";; esac
         case "$host" in *:*) host="[$host]";; esac
@@ -151,7 +152,7 @@ if [ "$interactive" = 1 ]; then interactive_config; else heading; fi
 mkdir -p /var/log/ss-alpine
 chmod 700 /var/log/ss-alpine
 log=$(mktemp /var/log/ss-alpine/install.log.XXXXXX)
-printf '  系统       %s\n  安装日志   %s\n\n' "${PRETTY_NAME:-$ID}" "$log" >&3
+printf '  安装日志   %s\n\n' "$log" >&3
 install_main() {
 step 1 '检查系统与运行环境'
 if [ "${SS_START:-1}" != 0 ]; then
@@ -294,8 +295,15 @@ ok '开机启动已启用'
 step 5 '检查服务状态'
 if [ "${SS_START:-1}" != 0 ]; then
 service_action restart
-sleep 2
-service_action status || fail "服务启动失败，请检查配置、IPv6 支持和端口占用"
+attempt=0
+until service_action status >/dev/null 2>&1; do
+    if [ "$attempt" -ge 20 ]; then
+        service_action status || true
+        fail "服务启动失败，请检查配置、IPv6 支持和端口占用"
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.25
+done
 ok '服务正在运行'
 else
     ok '仅准备模式：已跳过服务启动'
@@ -312,5 +320,6 @@ show
 line
 printf '  查看链接   sh /tmp/ss-install.sh show\n  重启服务   sh /tmp/ss-install.sh restart\n  查看日志   cat %s\n\n' "$log" >&3
 warn '请在云安全组和主机防火墙放行所配置端口的 TCP 与 UDP。'
+
 
 
