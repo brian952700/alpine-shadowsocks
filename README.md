@@ -68,7 +68,7 @@ sh /tmp/ss-install.sh uninstall
 
 卸载移除服务，保留配置及程序。Debian 使用 systemd，日志可用 `journalctl -u ss-alpine -e` 查看；Alpine 使用 OpenRC。手工改配置后运行 restart。
 
-`SS_START=0 sh /tmp/ss-install.sh` 只安装并设置开机启动，暂不启动服务，适用于准备系统镜像；正常安装不要设置。
+`SS_START=0 sh /tmp/ss-install.sh` 只准备文件并设置开机启动。下次正常运行安装脚本时，会启动服务或重启已有进程以应用已准备的变更。
 
 ## 网络与验证
 

@@ -5,6 +5,7 @@ umask 077
 SERVICE=ss-alpine
 DIR=/etc/ss-alpine
 CONFIG=$DIR/config.json
+RESTART_PENDING=$DIR/.restart-pending
 # User-facing output bypasses the detailed installation log.
 exec 3>&1
 cyan='' green='' yellow='' red='' reset=''
@@ -245,11 +246,15 @@ service_pid() {
     fi
 }
 
+as_service_user() {
+    setpriv --reuid "$SERVICE" --regid "$SERVICE" --clear-groups -- "$@"
+}
+
 service_owns_listeners() (
     checked_pid=$1
     checked_port=$2
     checked_mode=$3
-    socket_rows=$(ss -H -O -lntup "sport = :$checked_port") || return 1
+    socket_rows=$(as_service_user ss -H -O -lntup "sport = :$checked_port") || return 1
     printf '%s\n' "$socket_rows" | awk -v pid="$checked_pid" -v mode="$checked_mode" '
         index($0, "pid=" pid ",") {
             if ($1 == "tcp" && $2 == "LISTEN") tcp = 1
@@ -278,7 +283,7 @@ wait_for_service() (
             ''|0|*[!0-9]*) ;;
             *)
                 if service_action status >/dev/null 2>&1 &&
-                    [ "$(readlink "/proc/$ready_pid/exe" 2>/dev/null)" = "$ready_binary" ] &&
+                    [ "$(as_service_user readlink "/proc/$ready_pid/exe" 2>/dev/null)" = "$ready_binary" ] &&
                     awk -v uid="$ready_uid" '$1 == "Uid:" && $3 == uid { found = 1 } END { exit !found }' "/proc/$ready_pid/status" 2>/dev/null &&
                     tr '\000' '\n' 2>/dev/null < "/proc/$ready_pid/cmdline" | awk -v config="$CONFIG" '
                         (previous == "-c" || previous == "--config") && $0 == config { found = 1 }
@@ -363,9 +368,9 @@ if [ "$platform" = alpine ]; then
     repo="https://dl-cdn.alpinelinux.org/alpine/v$release/community"
     if [ "${SS_REFRESH:-0}" = 1 ]; then
         package_changed=1
-        apk add --no-cache --repository "$repo" --upgrade shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss
-    elif ! apk info -e shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss >/dev/null; then
-        apk add --no-cache --repository "$repo" shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss
+        apk add --no-cache --repository "$repo" --upgrade shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss setpriv
+    elif ! apk info -e shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss setpriv >/dev/null; then
+        apk add --no-cache --repository "$repo" shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss setpriv
     fi
     [ -x "$binary" ] || fail "未找到 ssserver"
 else
@@ -383,7 +388,7 @@ else
     esac
 
     missing_dependencies=0
-    for package in ca-certificates curl jq xz-utils systemd adduser iproute2; do
+    for package in ca-certificates curl jq xz-utils systemd adduser iproute2 util-linux; do
         if [ "$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)" != installed ]; then
             missing_dependencies=1
             break
@@ -392,7 +397,7 @@ else
     if [ "$missing_dependencies" = 1 ] || [ "${SS_REFRESH:-0}" = 1 ]; then
         apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
         DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
-            install -y --no-install-recommends ca-certificates curl jq xz-utils systemd adduser iproute2
+            install -y --no-install-recommends ca-certificates curl jq xz-utils systemd adduser iproute2 util-linux
     fi
 
     installed_version=''
@@ -459,7 +464,7 @@ respawn_delay=5
 respawn_max=5
 respawn_period=60
 depend() {
-    need net
+    use net
     after firewall
 }
 EOF
@@ -526,11 +531,15 @@ if [ "$was_enabled" = 0 ]; then
 fi
 ok '开机启动已启用'
 step 5 '检查服务状态'
+restart_needed=0
+if [ "$config_changed$unit_changed$binary_changed$package_changed" != 0000 ] || [ -f "$RESTART_PENDING" ]; then
+    restart_needed=1
+fi
 if [ "${SS_START:-1}" != 0 ]; then
     if [ "$was_running" = 0 ]; then
         service_touched=1
         service_action start
-    elif [ "$config_changed$unit_changed$binary_changed$package_changed" != 0000 ]; then
+    elif [ "$restart_needed" = 1 ]; then
         service_touched=1
         service_action restart
     fi
@@ -542,6 +551,11 @@ fi
 if [ "$config_changed" = 1 ] && [ -f "$rollback_dir/config" ]; then
     config_backup=$(mktemp "$CONFIG.bak.XXXXXX")
     cp -pL "$rollback_dir/config" "$config_backup" || warn "未能保存额外配置备份：$config_backup"
+fi
+if [ "${SS_START:-1}" != 0 ]; then
+    rm -f "$RESTART_PENDING"
+elif [ "$restart_needed" = 1 ]; then
+    : > "$RESTART_PENDING"
 fi
 transaction=0
 }

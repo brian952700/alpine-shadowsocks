@@ -125,7 +125,6 @@ settings = json.loads(config.read_text())
 settings["server"] = "127.0.0.2"
 port = settings["server_port"]
 config.write_text(json.dumps(settings, indent=2) + "\n")
-previous = config.read_bytes()
 
 with tempfile.TemporaryDirectory() as directory:
     state = Path(directory)
@@ -195,10 +194,10 @@ elif action not in ("stop", "daemon-reload", "reset-failed"):
     def manager(action):
         subprocess.run([str(systemctl), action], env=env, check=True, timeout=5)
 
-    def wait_for_original_listener():
+    def wait_for_listener(address):
         for _ in range(50):
             try:
-                with socket.create_connection(("127.0.0.2", port), timeout=0.2):
+                with socket.create_connection((address, port), timeout=0.2):
                     return
             except OSError:
                 time.sleep(0.1)
@@ -210,12 +209,24 @@ elif action not in ("stop", "daemon-reload", "reset-failed"):
 
     try:
         manager("start")
-        wait_for_original_listener()
+        wait_for_listener("127.0.0.2")
         pidfile = state / "pid"
         before_pid = pidfile.read_text()
         same = install(env)
         assert same.returncode == 0, same.stdout + same.stderr
         assert pidfile.read_text() == before_pid, same.stdout
+
+        prepared = install(dict(env, SS_START="0", SS_LISTEN="127.0.0.3"))
+        assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+        assert pidfile.read_text() == before_pid, prepared.stdout
+        assert json.loads(config.read_text())["server"] == "127.0.0.3", prepared.stdout
+        wait_for_listener("127.0.0.2")
+
+        activated = install(env)
+        assert activated.returncode == 0, activated.stdout + activated.stderr
+        assert pidfile.read_text() != before_pid, activated.stdout
+        wait_for_listener("127.0.0.3")
+        previous = config.read_bytes()
 
         with socket.socket() as tcp, socket.socket(type=socket.SOCK_DGRAM) as udp:
             tcp.bind(("127.0.0.1", port))
@@ -226,11 +237,11 @@ elif action not in ("stop", "daemon-reload", "reset-failed"):
             assert "安装完成，服务正在运行" not in conflict.stdout, conflict.stdout
             assert config.read_bytes() == previous, conflict.stdout + conflict.stderr
             assert (state / "enabled").exists(), conflict.stdout
-            wait_for_original_listener()
+            wait_for_listener("127.0.0.3")
     finally:
         manager("stop")
 
-print("Unchanged install kept its process; occupied port caused a failed upgrade and rollback")
+print("Unchanged install kept its process; prepared changes activated; occupied port triggered rollback")
 PY
 fi
 
