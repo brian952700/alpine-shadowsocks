@@ -1,6 +1,6 @@
 # Shadowsocks 一键安装（Alpine / Debian 12+）
 
-支持 Alpine Linux 稳定版（OpenRC），以及 Debian 12 及以上正式版本（systemd）。Debian 支持 amd64、arm64，使用官方 shadowsocks-rust v1.25.0 的 musl 二进制，并核对 GitHub 发布资产的 SHA256；Alpine 使用匹配系统版本的官方 community 软件包。
+支持 Alpine Linux 稳定版（OpenRC），以及 Debian 12 及以上正式版本（systemd）。Debian 支持 amd64、arm64，使用官方 shadowsocks-rust v1.25.0 的 musl 二进制，并使用脚本内固定的 SHA256 核对下载包；Alpine 使用匹配系统版本的官方 community 软件包。
 
 ## 一键安装
 
@@ -47,7 +47,11 @@ SS_LISTEN=0.0.0.0 sh /tmp/ss-install.sh
 
 ## 升级已有安装
 
-重新下载并运行脚本。保留原端口、密码、加密方式；旧配置的 `0.0.0.0` 自动改为 `::`，并设置 `ipv6_only:false`。自定义监听地址保留。修改前会在同目录生成 `config.json.bak.时间戳` 备份。
+重新下载并运行脚本。保留原端口、密码、加密方式；已有监听地址和 IPv6 设置也会保留。需要把旧配置切换为双栈时，运行 `SS_LISTEN=:: sh /tmp/ss-install.sh`。安装成功后，旧配置保存在同目录的 `config.json.bak.*`。
+
+依赖齐全时会跳过软件包刷新。Debian 检查本地二进制版本，缺失或版本不匹配时下载并校验发布包。想重新下载或刷新软件包时，可运行 `SS_REFRESH=1 sh /tmp/ss-install.sh`。运行中的服务只在程序、配置或服务文件需要更新时重启。安装会确认服务进程已打开配置要求的 TCP/UDP 端口。
+
+升级失败时，脚本尝试恢复它替换的配置、服务文件和 Debian 二进制，并恢复原服务状态。APT/APK 已安装或更新的系统软件包由包管理器管理。脚本通过 `/run/lock/ss-alpine.install` 串行执行安装和服务操作。若进程被强制终止且锁目录仍在，请先确认没有相关操作运行，再移除空的锁目录。
 
 为兼容原安装，两种系统沿用服务名 `ss-alpine`、用户 `ss-alpine` 和配置路径 `/etc/ss-alpine/config.json`。
 
@@ -88,4 +92,3 @@ sh /tmp/ss-install.sh --interactive
 ```
 
 首次安装可设置端口、加密方式、监听地址、密码和公网地址；回车使用默认值，密码输入隐藏，最后确认后开始安装。已有配置会询问是否保留配置升级，选择取消不会修改安装。非交互终端自动跳过询问，可通过环境变量指定配置。
-
