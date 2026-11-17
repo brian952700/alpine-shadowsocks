@@ -208,7 +208,8 @@ elif action not in ("stop", "daemon-reload", "reset-failed"):
                               env=environment, text=True, capture_output=True, timeout=60)
 
     try:
-        manager("start")
+        initial = install(env)
+        assert initial.returncode == 0, initial.stdout + initial.stderr
         wait_for_listener("127.0.0.2")
         pidfile = state / "pid"
         before_pid = pidfile.read_text()
