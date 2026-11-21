@@ -15,11 +15,13 @@ if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR+x}" ]; then
 fi
 log='' work='' temp='' unit_temp='' binary_temp='' restore_temp='' tty_hidden=0
 lock_dir='' rollback_dir='' transaction=0
+progress_pid=''
 config_changed=0 unit_changed=0 binary_pending=0 binary_changed=0 enable_changed=0 service_touched=0
 was_running=0 was_enabled=0
 cleanup() {
     result=$?
     trap - EXIT
+    stop_progress
     if [ "$tty_hidden" = 1 ]; then stty echo < /dev/tty || true; fi
     if [ "$transaction" = 1 ]; then
         if rollback >> "$log" 2>&1; then
@@ -53,6 +55,56 @@ heading() {
 step() { printf '%s  [%s/5] %s%s\n' "$cyan" "$1" "$2" "$reset" >&3; }
 ok() { printf '%s        ✓ %s%s\n\n' "$green" "$*" "$reset" >&3; }
 warn() { printf '%s  ! %s%s\n' "$yellow" "$*" "$reset" >&3; }
+stop_progress() {
+    if [ -n "$progress_pid" ]; then
+        kill "$progress_pid" 2>/dev/null || true
+        wait "$progress_pid" 2>/dev/null || true
+        progress_pid=''
+        printf '\r\033[K' >&3
+    fi
+}
+progress_heartbeat() {
+    # The installer owns cleanup. This subprocess only owns its sleep timer.
+    trap - EXIT HUP INT
+    timer=''
+    trap 'if [ -n "$timer" ]; then kill "$timer" 2>/dev/null || true; fi; exit 0' TERM
+    elapsed=0
+    delay=3
+    while :; do
+        sleep "$delay" &
+        timer=$!
+        wait "$timer" || return
+        timer=''
+        elapsed=$((elapsed + delay))
+        printf '\r\033[K        … 正在处理（已等待 %s 秒）' "$elapsed" >&3
+        delay=1
+    done
+}
+run_install_task() {
+    task_label=$1
+    shift
+    task_started=$(date +%s)
+    printf '        → %s\n' "$task_label" >&3
+    if [ -t 3 ] && [ "${TERM:-dumb}" != dumb ] && [ "$original_action" != --non-interactive ]; then
+        progress_heartbeat &
+        progress_pid=$!
+    fi
+    task_status=0
+    "$@" || task_status=$?
+    stop_progress
+    task_elapsed=$(($(date +%s) - task_started))
+    if [ "$task_elapsed" -lt 0 ]; then task_elapsed=0; fi
+    if [ "$task_status" -eq 0 ]; then
+        printf '        %s✓ 完成%s（%s 秒）\n' "$green" "$reset" "$task_elapsed" >&3
+    else
+        printf '        %s× %s失败%s（退出码 %s，耗时 %s 秒）\n' \
+            "$red" "$task_label" "$reset" "$task_status" "$task_elapsed" >&3
+    fi
+    return "$task_status"
+}
+verify_archive() {
+    printf '%s  %s\n' "$1" "$2" | sha256sum -c -
+}
 prompt() {
     printf '  %s [%s]：' "$1" "$2" >&3
     read_answer
@@ -132,7 +184,8 @@ show() {
 interactive=0
 case "${1:-install}" in -h|--help|help) usage; exit 0;; esac
 [ "$#" -le 1 ] || { usage; exit 1; }
-action=${1:-install}
+original_action=${1:-install}
+action=$original_action
 case "$action" in
     --interactive) interactive=1; action=install;;
     --non-interactive) action=install;;
@@ -368,9 +421,9 @@ if [ "$platform" = alpine ]; then
     repo="https://dl-cdn.alpinelinux.org/alpine/v$release/community"
     if [ "${SS_REFRESH:-0}" = 1 ]; then
         package_changed=1
-        apk add --no-cache --repository "$repo" --upgrade shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss setpriv
+        run_install_task '更新 Alpine 软件包' apk add --no-cache --repository "$repo" --upgrade shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss setpriv
     elif ! apk info -e shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss setpriv >/dev/null; then
-        apk add --no-cache --repository "$repo" shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss setpriv
+        run_install_task '安装 Alpine 软件包' apk add --no-cache --repository "$repo" shadowsocks-rust-ssserver jq curl ca-certificates iproute2-ss setpriv
     fi
     [ -x "$binary" ] || fail "未找到 ssserver"
 else
@@ -395,8 +448,8 @@ else
         fi
     done
     if [ "$missing_dependencies" = 1 ] || [ "${SS_REFRESH:-0}" = 1 ]; then
-        apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
-        DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+        run_install_task '刷新 Debian 软件包索引' apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+        run_install_task '安装 Debian 依赖' env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
             install -y --no-install-recommends ca-certificates curl jq xz-utils systemd adduser iproute2 util-linux
     fi
 
@@ -407,12 +460,12 @@ else
     if [ "$installed_version" != "shadowsocks ${version#v}" ] || [ "${SS_REFRESH:-0}" = 1 ]; then
         asset="shadowsocks-$version.$target.tar.xz"
         if [ -z "$work" ]; then work=$(mktemp -d); fi
-        curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        run_install_task '下载 Shadowsocks' curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
             --connect-timeout 10 --max-time 90 --retry 3 --retry-max-time 120 \
             "https://github.com/shadowsocks/shadowsocks-rust/releases/download/$version/$asset" \
             -o "$work/archive.tar.xz"
-        printf '%s  %s\n' "$checksum" "$work/archive.tar.xz" | sha256sum -c -
-        tar --no-same-owner --no-same-permissions -xJf "$work/archive.tar.xz" -C "$work" ssserver
+        run_install_task '校验下载文件 SHA-256' verify_archive "$checksum" "$work/archive.tar.xz"
+        run_install_task '解压 Shadowsocks' tar --no-same-owner --no-same-permissions -xJf "$work/archive.tar.xz" -C "$work" ssserver
         [ "$("$work/ssserver" --version)" = "shadowsocks ${version#v}" ] || fail "下载的 ssserver 版本不符"
         binary_pending=1
     fi
